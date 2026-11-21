@@ -6,19 +6,24 @@ from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 
 load_dotenv()
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login")
 
+def _secret_key():
+    key = os.getenv("SECRET_KEY")
+    if not key or len(key) < 32:
+        raise RuntimeError("SECRET_KEY must be set to a random value of at least 32 characters")
+    return key
+
 def make_token(username: str):
     payload = {"sub": username, "exp": datetime.now(timezone.utc) + timedelta(hours=12)}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, _secret_key(), algorithm=ALGORITHM)
 
 def require_admin(token: str = Depends(oauth2_scheme)):
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, _secret_key(), algorithms=[ALGORITHM])
         username = payload.get("sub")
-        if username != os.getenv("ADMIN_USERNAME", "admin"):
+        if not os.getenv("ADMIN_USERNAME") or username != os.getenv("ADMIN_USERNAME"):
             raise ValueError("invalid admin")
         return username
     except (JWTError, ValueError):
