@@ -13,11 +13,12 @@ from .auth import make_token, require_admin
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parent.parent
-UPLOADS = ROOT / "static" / "uploads"
+UPLOADS = Path(os.getenv("UPLOAD_DIR", str(ROOT / "static" / "uploads")))
 UPLOADS.mkdir(parents=True, exist_ok=True)
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="MEVORA API")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
 
 class ProductIn(BaseModel):
     name: str
@@ -67,13 +68,29 @@ def admin_page():
 
 @app.post("/api/login")
 def login(form: OAuth2PasswordRequestForm = Depends()):
-    if form.username != os.getenv("ADMIN_USERNAME", "admin") or form.password != os.getenv("ADMIN_PASSWORD", "ChangeThisPassword123!"):
+    admin_username = os.getenv("ADMIN_USERNAME")
+    admin_password = os.getenv("ADMIN_PASSWORD")
+    if not admin_username or not admin_password or not os.getenv("SECRET_KEY"):
+        raise HTTPException(status_code=503, detail="Admin login serverda sozlanmagan")
+    if form.username != admin_username or form.password != admin_password:
         raise HTTPException(status_code=401, detail="Login yoki parol noto‘g‘ri")
     return {"access_token": make_token(form.username), "token_type": "bearer"}
 
 @app.get("/api/products")
 def products(db: Session = Depends(get_db)):
-    return [p.__dict__ | {} for p in db.query(Product).filter(Product.active == True).all()]
+    rows = db.query(Product).filter(Product.active == True).all()
+    return [{
+        "id": p.id,
+        "name": p.name,
+        "category": p.category,
+        "description": p.description,
+        "unit": p.unit,
+        "retail_price": p.retail_price,
+        "wholesale_price": p.wholesale_price,
+        "image": p.image,
+        "active": p.active,
+        "stock": p.stock,
+    } for p in rows]
 
 @app.post("/api/products", dependencies=[Depends(require_admin)])
 def add_product(data: ProductIn, db: Session = Depends(get_db)):
@@ -102,7 +119,7 @@ def upload(file: UploadFile = File(...)):
     if ext not in [".jpg",".jpeg",".png",".webp"]: raise HTTPException(400, "Faqat JPG, PNG yoki WEBP rasm")
     name = f"product_{os.urandom(8).hex()}{ext}"
     with (UPLOADS / name).open("wb") as f: shutil.copyfileobj(file.file, f)
-    return {"image": f"/static/uploads/{name}"}
+    return {"image": f"/uploads/{name}"}
 
 @app.post("/api/orders")
 def create_order(data: OrderIn, db: Session = Depends(get_db)):
