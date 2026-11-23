@@ -62,9 +62,15 @@ def seed():
 def home():
     return FileResponse(ROOT / "static" / "index.html")
 
-@app.get("/admin")
 def admin_page():
-    return FileResponse(ROOT / "static" / "admin.html")
+    return FileResponse(ROOT / "app" / "admin.html")
+
+# Admin sahifasi faqat Render'dagi ADMIN_PATH maxfiy yo'li orqali ochiladi.
+ADMIN_PATH = os.getenv("ADMIN_PATH", "").strip()
+if ADMIN_PATH:
+    if not ADMIN_PATH.startswith("/"):
+        ADMIN_PATH = "/" + ADMIN_PATH
+    app.add_api_route(ADMIN_PATH, admin_page, methods=["GET"], include_in_schema=False)
 
 @app.post("/api/login")
 def login(form: OAuth2PasswordRequestForm = Depends()):
@@ -80,16 +86,10 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
 def products(db: Session = Depends(get_db)):
     rows = db.query(Product).filter(Product.active == True).all()
     return [{
-        "id": p.id,
-        "name": p.name,
-        "category": p.category,
-        "description": p.description,
-        "unit": p.unit,
-        "retail_price": p.retail_price,
-        "wholesale_price": p.wholesale_price,
-        "image": p.image,
-        "active": p.active,
-        "stock": p.stock,
+        "id": p.id, "name": p.name, "category": p.category,
+        "description": p.description, "unit": p.unit,
+        "retail_price": p.retail_price, "wholesale_price": p.wholesale_price,
+        "image": p.image, "active": p.active, "stock": p.stock,
     } for p in rows]
 
 @app.post("/api/products", dependencies=[Depends(require_admin)])
