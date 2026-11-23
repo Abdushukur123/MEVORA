@@ -27,3 +27,12 @@ class Order(Base):
     price_type: Mapped[str] = mapped_column(String(20), default="retail")
     status: Mapped[str] = mapped_column(String(30), default="Yangi")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    full_name: Mapped[str] = mapped_column(String(120))
+    phone: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
