@@ -8,8 +8,10 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from .database import Base, engine, get_db
-from .models import Product, Order
+from .models import Product, Order, Customer
 from .auth import make_token, require_admin
+import hashlib, hmac, secrets
+from jose import jwt
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parent.parent
@@ -81,6 +83,56 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
     if form.username != admin_username or form.password != admin_password:
         raise HTTPException(status_code=401, detail="Login yoki parol noto‘g‘ri")
     return {"access_token": make_token(form.username), "token_type": "bearer"}
+
+def hash_customer_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+    return salt.hex() + ":" + digest.hex()
+
+def verify_customer_password(password: str, stored: str) -> bool:
+    try:
+        salt_hex, digest_hex = stored.split(":", 1)
+        salt = bytes.fromhex(salt_hex)
+        candidate = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1).hex()
+        return hmac.compare_digest(candidate, digest_hex)
+    except (ValueError, TypeError):
+        return False
+
+def make_customer_token(customer: Customer) -> str:
+    secret = os.getenv("SECRET_KEY")
+    if not secret or len(secret) < 32:
+        raise HTTPException(503, "Server xavfsizlik kaliti sozlanmagan")
+    from datetime import datetime, timedelta, timezone
+    payload = {"sub": str(customer.id), "role": "customer", "exp": datetime.now(timezone.utc) + timedelta(days=7)}
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+@app.post("/api/register")
+def register_customer(data: dict, db: Session = Depends(get_db)):
+    full_name = str(data.get("full_name", "")).strip()
+    phone = str(data.get("phone", "")).strip()
+    password = str(data.get("password", ""))
+    if len(full_name) < 2 or len(full_name) > 120:
+        raise HTTPException(400, "Ism-familiyani to‘g‘ri kiriting")
+    if len(phone) < 7 or len(phone) > 40:
+        raise HTTPException(400, "Telefon raqamini to‘g‘ri kiriting")
+    if len(password) < 8:
+        raise HTTPException(400, "Parol kamida 8 ta belgidan iborat bo‘lsin")
+    if db.query(Customer).filter(Customer.phone == phone).first():
+        raise HTTPException(409, "Bu telefon raqam bilan akkaunt mavjud")
+    customer = Customer(full_name=full_name, phone=phone, password_hash=hash_customer_password(password))
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return {"ok": True, "access_token": make_customer_token(customer), "token_type": "bearer", "customer": {"id": customer.id, "full_name": customer.full_name, "phone": customer.phone}}
+
+@app.post("/api/customer/login")
+def customer_login(data: dict, db: Session = Depends(get_db)):
+    phone = str(data.get("phone", "")).strip()
+    password = str(data.get("password", ""))
+    customer = db.query(Customer).filter(Customer.phone == phone).first()
+    if not customer or not verify_customer_password(password, customer.password_hash):
+        raise HTTPException(401, "Telefon raqam yoki parol noto‘g‘ri")
+    return {"ok": True, "access_token": make_customer_token(customer), "token_type": "bearer", "customer": {"id": customer.id, "full_name": customer.full_name, "phone": customer.phone}}
 
 @app.get("/api/products")
 def products(db: Session = Depends(get_db)):
