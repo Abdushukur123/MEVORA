@@ -34,11 +34,11 @@ class ProductIn(BaseModel):
     stock: float = Field(default=100, ge=0)
 
 class OrderIn(BaseModel):
-    customer_name: str
-    phone: str
-    address: str = ""
+    customer_name: str = Field(min_length=2, max_length=120)
+    phone: str = Field(min_length=9, max_length=20)
+    address: str = Field(min_length=10, max_length=300)
     price_type: str = "retail"
-    items: list[dict]
+    items: list[dict] = Field(min_length=1, max_length=50)
 
 @app.on_event("startup")
 def seed():
@@ -175,14 +175,21 @@ def upload(file: UploadFile = File(...)):
 
 @app.post("/api/orders")
 def create_order(data: OrderIn, db: Session = Depends(get_db)):
-    if not data.customer_name.strip() or not data.phone.strip() or not data.items:
-        raise HTTPException(400, "Ism, telefon va savatni to‘ldiring")
+    if not data.customer_name.strip() or not data.address.strip():
+        raise HTTPException(400, "Ism va to‘liq yetkazish manzilini kiriting")
+    phone_digits = "".join(ch for ch in data.phone if ch.isdigit())
+    if len(phone_digits) < 9 or len(phone_digits) > 13:
+        raise HTTPException(400, "Telefon raqamini xalqaro yoki mahalliy formatda to‘g‘ri kiriting")
     if data.price_type not in ("retail","wholesale"): raise HTTPException(400, "Narx turi xato")
     normalized=[]; total=0
     for item in data.items:
-        p=db.get(Product, int(item.get("product_id",0)))
-        qty=float(item.get("quantity",0))
-        if not p or not p.active or qty <= 0: raise HTTPException(400, "Savatdagi mahsulot yoki miqdor xato")
+        try:
+            p=db.get(Product, int(item.get("product_id",0)))
+            qty=float(item.get("quantity",0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Savatdagi mahsulot yoki miqdor xato")
+        if not p or not p.active or qty <= 0 or qty > 1000: raise HTTPException(400, "Savatdagi mahsulot yoki miqdor xato")
+        if qty > p.stock: raise HTTPException(400, f"{p.name}: omborda yetarli mahsulot yo‘q")
         price=p.wholesale_price if data.price_type=="wholesale" else p.retail_price
         line=round(price*qty,2); total+=line
         normalized.append({"product_id":p.id,"name":p.name,"unit":p.unit,"quantity":qty,"unit_price":price,"line_total":line})
@@ -199,6 +206,6 @@ def admin_orders(db: Session = Depends(get_db)):
 def set_order_status(oid: int, status: str, db: Session = Depends(get_db)):
     o=db.get(Order,oid)
     if not o: raise HTTPException(404,"Buyurtma topilmadi")
-    if status not in ["Yangi","Qabul qilindi","Tayyorlanmoqda","Yuborildi","Yakunlandi","Bekor qilindi"]: raise HTTPException(400,"Status xato")
+    if status not in ["Yangi","Qabul qilindi","Tayyorlanmoqda","Kuryerga berildi","Yo‘lda","Yetkazildi","Bekor qilindi"]: raise HTTPException(400,"Status xato")
     o.status=status; db.commit()
     return {"ok":True}
